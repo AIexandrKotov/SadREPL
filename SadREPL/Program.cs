@@ -1,5 +1,6 @@
 ﻿using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.InteropServices;
 using SadConsole;
 using SadConsole.Configuration;
@@ -9,7 +10,9 @@ using SadConsole.UI;
 using SadConsole.UI.Controls;
 using SadRogue.Primitives;
 using SLThree;
+using SLThree.Extensions;
 using SLThree.Language;
+using SLThree.sys;
 using static SLThree.ExecutionContext;
 using Console = SadConsole.Console;
 
@@ -28,7 +31,14 @@ namespace SadREPL
             try
             {
                 LastError = null!;
-                LastExecutable = Parser.ParseScript(text);
+                try
+                {
+                    LastExecutable = Parser.ParseScript(text);
+                }
+                catch
+                {
+                    LastExecutable = Parser.ParseExpression(text);
+                }
                 Output = LastExecutable.GetValue(REPLContext);
             }
             catch (Exception ex)
@@ -42,30 +52,21 @@ namespace SadREPL
     {
         public InputConsole Input;
         public OutputConsole Output;
+        public VariablesConsole Variables;
+        public TreeConsole Tree;
         public SLThreeEnvironment Environment = new();
 
         public MainScreen()
         {
             Input = new InputConsole(this);
             Output = new OutputConsole(this);
-
-            var variablesConsole = new Console(25, 15);
-            variablesConsole.Position = (1, 16);
-            variablesConsole.Surface.DefaultBackground = Color.AnsiCyan;
-
-            var xmlTreeConsole = new Console(36, 15);
-            xmlTreeConsole.Position = (27, 16);
-            xmlTreeConsole.Surface.DefaultBackground = Color.AnsiCyan;
-
-            var info2Console = new Console(25, 15);
-            info2Console.Position = (64, 16);
-            info2Console.Surface.DefaultBackground = Color.AnsiCyan;
+            Variables = new VariablesConsole(this);
+            Tree = new TreeConsole(this);
 
             Children.Add(Input);
             Children.Add(Output);
-            Children.Add(variablesConsole);
-            Children.Add(xmlTreeConsole);
-            Children.Add(info2Console);
+            Children.Add(Variables);
+            Children.Add(Tree);
         }
 
         public void TextInputed()
@@ -74,6 +75,14 @@ namespace SadREPL
 
             Input.MainTextBox.Text = "";
             Input.MainTextBox.CaretPosition = 0;
+
+            UpdateOutput();
+            UpdateVariables();
+            UpdateTree();
+        }
+
+        public void UpdateOutput()
+        {
 
             Output.Clear();
             Output.Cursor.Move(0, 0);
@@ -85,6 +94,47 @@ namespace SadREPL
             else
             {
                 Output.Cursor.SetPrintAppearance(Color.White).Print(Environment.Output?.ToString() ?? "null");
+            }
+        }
+
+        public void UpdateVariables()
+        {
+            Variables.Clear();
+            Variables.Cursor.Move(0, 0);
+
+            var variables = Environment.REPLContext.LocalVariables.GetAsDictionary().Take(16).ToArray();
+
+            var i = 0;
+
+            foreach (var variable in variables)
+            {
+                Variables.Cursor.Move(0, i);
+                Variables.Cursor.SetPrintAppearance(Color.AnsiCyan).Print(variable.Value?.GetType().GetTypeString() ?? "?");
+                Variables.Cursor.SetPrintAppearance(Color.Yellow).Print(" " + variable.Key);
+                Variables.Cursor.SetPrintAppearance(Color.White).Print(" =");
+                Variables.Cursor.SetPrintAppearance(Color.Cyan).Print(" " + (variable.Value?.ToString() ?? "null"));
+                i += 1;
+            }
+        }
+
+        public void UpdateTree()
+        {
+            if (Environment.LastExecutable == null)
+                return;
+
+            Tree.Clear();
+            Tree.Cursor.Move(0, 0);
+
+            var xml = slt.repr(Environment.LastExecutable);
+
+            var i = 0;
+
+            foreach (var line in xml.Split(System.Environment.NewLine))
+            {
+                var ind = Array.FindIndex(line.ToCharArray(), x => !char.IsWhiteSpace(x));
+                Tree.Cursor.Move(ind, i);
+                Tree.Cursor.Print(line);
+                i += 1;
             }
         }
     }
@@ -130,9 +180,33 @@ namespace SadREPL
         {
             Main = mainScreen;
             Position = (1, 3);
-            Surface.DefaultBackground = Color.AnsiCyan;
             Surface.UsePrintProcessor = true;
             IsVisible = true;
+            Cursor.PrintAppearanceMatchesHost = false;
+        }
+    }
+
+    public class VariablesConsole : Console
+    {
+        public readonly MainScreen Main;
+
+        public VariablesConsole(MainScreen main) : base(44, 14)
+        {
+            Main = main;
+            Position = (1, 17);
+            Surface.DefaultBackground = Color.AnsiCyan;
+        }
+    }
+
+    public class TreeConsole : Console
+    {
+        public readonly MainScreen Main;
+
+        public TreeConsole(MainScreen main) : base(43, 14)
+        {
+            Main = main;
+            Position = (46, 17);
+            Surface.DefaultBackground = Color.AnsiCyan;
         }
     }
 
@@ -150,6 +224,9 @@ namespace SadREPL
             Builder configuration = new Builder()
                 .SetScreenSize(90, 32)
                 .UseDefaultConsole()
+#if DEBUG
+                .EnableImGuiDebugger(Keys.F12)
+#endif
                 .OnStart(Startup)
                 ;
 
